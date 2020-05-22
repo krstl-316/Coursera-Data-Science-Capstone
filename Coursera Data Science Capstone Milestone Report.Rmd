@@ -1,0 +1,220 @@
+---
+title: 'Coursera Data Science Capstone Milestone Report'
+author: "Jingchen Huyan"
+date: "5/25/2020"
+output: html_document
+---
+
+# I. Introduction  
+This is the Milestone Report for the Coursera Data Science Capstone project. The goal of this project is to create a predictive text model using Natural language processing techniques.  
+This milestone report includes loading data, set training data, explore the training data and summarize the training data. Then report plans for the following steps.   
+
+# II. Load the data  
+## i. Loading data and view the files  
+```{r <loading data>,message=FALSE}
+        if(!file.exists("./data")){dir.create("./data")}
+
+        fileUrl <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+        download.file(fileUrl,destfile="./data/Dataset.zip",mode = "wb") 
+
+        unzip(zipfile="./data/Dataset.zip",exdir="./data")
+```  
+```{r <list files>,message=FALSE}
+        path1 <- file.path("./data" , "final")
+        files<-list.files(path1, recursive=TRUE)
+        files
+```  
+  
+## ii. Read the file  
+```{r <read file>}
+        twitter<-readLines("./data/final/en_US/en_US.twitter.txt",warn=FALSE,encoding="UTF-8")
+        blogs<-readLines("./data/final/en_US/en_US.blogs.txt",warn=FALSE,encoding="UTF-8")
+        news<-readLines("./data/final/en_US/en_US.news.txt",warn=FALSE,encoding="UTF-8")
+```  
+  
+## iii. Summarize the file  
+Here is the Brief view of the three files, including number of lines, number of words and number of characters.  
+```{r <summarize the file>, echo=FALSE}
+        library(stringi)
+        blogswords <- stri_count_words(blogs)
+        newswords <- stri_count_words(news)
+        twitterwords <- stri_count_words(twitter)
+        nchar_twitter<-sum(nchar(twitter))
+        nchar_blogs<-sum(nchar(blogs))
+        nchar_news<-sum(nchar(news))
+        data.frame("File Name" = c("twitter", "blogs", "news"),
+                   "num.lines" = c(length(twitter),length(blogs), length(news)),
+                   "num.words" = c(sum(blogswords), sum(newswords), sum(twitterwords)),
+                   "Num of character"=c(nchar_blogs,nchar_news,nchar_twitter))
+```  
+  
+# III. Data Processing  
+## i. Remove non english characters
+```{r <remove non english>}
+        blogs <- iconv(blogs, "latin1", "ASCII", sub="")
+        news <- iconv(news, "latin1", "ASCII", sub="")
+        twitter <- iconv(twitter, "latin1", "ASCII", sub="")
+```  
+## ii. Data sampling  
+```{r <data sampling>}
+        set.seed(2020)
+        sample <- c(sample(blogs, length(blogs) * 0.01),
+                    sample(news, length(news) * 0.01),
+                    sample(twitter, length(twitter) * 0.01))
+```  
+## iii. Corpus building  
+```{r <corpus building>}
+        library(NLP)
+        library(tm)
+        corpus <- VCorpus(VectorSource(sample))
+        toSpace <- content_transformer(function(x, pattern) gsub(pattern, " ", x))
+        corpus <- tm_map(corpus, toSpace, "(f|ht)tp(s?)://(.*)[.][a-z]+")
+        corpus <- tm_map(corpus, toSpace, "@[^\\s]+")
+        corpus <- tm_map(corpus, tolower)
+        corpus <- tm_map(corpus, removeWords, stopwords("en"))
+        corpus <- tm_map(corpus, removePunctuation)
+        corpus <- tm_map(corpus, removeNumbers)
+        corpus <- tm_map(corpus, stripWhitespace)
+        corpus <- tm_map(corpus, PlainTextDocument)
+```  
+## iv. Read corpus  
+```{r <read corpus> ,message=FALSE}
+        corpusdf<-data.frame(text=unlist(sapply(corpus,'[',"content")),stringsAsFactors = FALSE)
+        head(corpusdf)
+```  
+  
+# IV. Data Exploration  
+## i. Unigram Buiding with Visualization  
+```{r <unigram buiding>,message=FALSE}
+        library(RWeka)
+        library(ggplot2)
+        unigram<-function(x) NGramTokenizer(x,Weka_control(min=1,max=1))
+        unigramtab<-TermDocumentMatrix(corpus,control=list(tokenize=unigram))
+        unigramcorpus<-findFreqTerms(unigramtab,lowfreq=1000)
+        unigramcorpusnum<-rowSums(as.matrix(unigramtab[unigramcorpus,]))
+        unigramcorpustab<-data.frame(Word=names(unigramcorpusnum),frequency=unigramcorpusnum)
+        unigramcorpussort<-unigramcorpustab[order(-unigramcorpustab$frequency),]
+```
+  
+The unigram chart is shown as follow.  
+```{r , echo=FALSE,message=FALSE}
+        ggplot(unigramcorpussort[1:15,],aes(x=reorder(Word,frequency),y=frequency))+
+                geom_bar(stat="identity",fill = I("grey50"))+
+                coord_flip()+
+                labs(title="Unigrams",x="Most Words",y="Frequency")+
+                theme(axis.text.x=element_text(angle=60))
+```  
+  
+Here is a word cloud of unigram.   
+```{r , echo=FALSE,message=FALSE}
+        unigramcloudcorpus<-findFreqTerms(unigramtab,lowfreq=100)
+        unigramcloudcorpusnum<-rowSums(as.matrix(unigramtab[unigramcloudcorpus,]))
+        unigramcloudcorpustab<-data.frame(Word=names(unigramcloudcorpusnum),frequency=unigramcloudcorpusnum)
+        library(RColorBrewer)
+        library(wordcloud)
+        wordcloud(unigramcloudcorpustab$Word, unigramcloudcorpustab$frequency, random.order = FALSE, rot.per = 0.3, scale = c(4,.5), 
+                                  max.words = 100, colors = brewer.pal(8, "Dark2"))
+        title(cex.main = 1, font.main = 2, "UniGram Word Cloud")
+```  
+
+## ii. Bigram Buiding with Visualization  
+```{r <bigram buiding>}
+        bigram<-function(x) NGramTokenizer(x,Weka_control(min=2,max=2))
+        bigramtab<-TermDocumentMatrix(corpus,control=list(tokenize=bigram))
+        bigramcorpus<-findFreqTerms(bigramtab,lowfreq=80)
+        bigramcorpusnum<-rowSums(as.matrix(bigramtab[bigramcorpus,]))
+        bigramcorpustab<-data.frame(Word=names(bigramcorpusnum),frequency=bigramcorpusnum)
+        bigramcorpussort<-bigramcorpustab[order(-bigramcorpustab$frequency),]
+```  
+  
+The bigram chart is shown as follow.  
+```{r , echo=FALSE}
+        ggplot(bigramcorpussort[1:12,],aes(x=reorder(Word,frequency),y=frequency))+
+                geom_bar(stat="identity",fill = I("grey50"))+
+                coord_flip()+
+                labs(title="Bigrams",x="Most Words",y="Frequency")+
+                theme(axis.text.x=element_text(angle=60))
+```  
+
+## iii. Trigram Buiding with Visualization  
+```{r <trigram buiding>}
+        trigram<-function(x) NGramTokenizer(x,Weka_control(min=3,max=3))
+        trigramtab<-TermDocumentMatrix(corpus,control=list(tokenize=trigram))
+        trigramcorpus<-findFreqTerms(trigramtab,lowfreq=10)
+        trigramcorpusnum<-rowSums(as.matrix(trigramtab[trigramcorpus,]))
+        trigramcorpustab<-data.frame(Word=names(trigramcorpusnum),frequency=trigramcorpusnum)
+        trigramcorpussort<-trigramcorpustab[order(-trigramcorpustab$frequency),]
+```
+  
+The trigram chart is shown as follow.  
+```{r , echo=FALSE}
+        ggplot(trigramcorpussort[1:10,],aes(x=reorder(Word,frequency),y=frequency))+
+                geom_bar(stat="identity",fill = I("grey50"))+
+                coord_flip()+
+                labs(title="Trigrams",x="Most Words",y="Frequency")+
+                theme(axis.text.x=element_text(angle=60))
+```  
+  
+Now let's set seed to another number. And look at the trigram barchart.  
+```{r <data sampling II>}
+        set.seed(22)
+        sample <- c(sample(blogs, length(blogs) * 0.01),
+                    sample(news, length(news) * 0.01),
+                    sample(twitter, length(twitter) * 0.01))
+```  
+```{r <corpus building II>, echo=FALSE}
+        library(NLP)
+        library(tm)
+        corpus <- VCorpus(VectorSource(sample))
+        toSpace <- content_transformer(function(x, pattern) gsub(pattern, " ", x))
+        corpus <- tm_map(corpus, toSpace, "(f|ht)tp(s?)://(.*)[.][a-z]+")
+        corpus <- tm_map(corpus, toSpace, "@[^\\s]+")
+        corpus <- tm_map(corpus, tolower)
+        corpus <- tm_map(corpus, removeWords, stopwords("en"))
+        corpus <- tm_map(corpus, removePunctuation)
+        corpus <- tm_map(corpus, removeNumbers)
+        corpus <- tm_map(corpus, stripWhitespace)
+        corpus <- tm_map(corpus, PlainTextDocument)
+```  
+```{r <trigram buiding II>, echo=FALSE}
+        trigram<-function(x) NGramTokenizer(x,Weka_control(min=3,max=3))
+        trigramtab<-TermDocumentMatrix(corpus,control=list(tokenize=trigram))
+        trigramcorpus<-findFreqTerms(trigramtab,lowfreq=8)
+        trigramcorpusnum<-rowSums(as.matrix(trigramtab[trigramcorpus,]))
+        trigramcorpustab<-data.frame(Word=names(trigramcorpusnum),frequency=trigramcorpusnum)
+        trigramcorpussort<-trigramcorpustab[order(-trigramcorpustab$frequency),]
+```  
+```{r , echo=FALSE}
+        ggplot(trigramcorpussort[1:10,],aes(x=reorder(Word,frequency),y=frequency))+
+                geom_bar(stat="identity",fill = I("grey50"))+
+                coord_flip()+
+                labs(title="Trigrams",x="Most Words",y="Frequency")+
+                theme(axis.text.x=element_text(angle=60))
+```  
+
+# V. Fingings in exploratory data analysis  
+- There are reduplication words in the corpus like "swag swag swag", "look look look, which might be used in the context of exclamation.   
+- There are abbreviation words in the corpus like "cinco de mayo", which might means Mayo Clinic.  
+
+# VI. Plans for next steps  
+- Split the original data randomly into training, test and validation set with 60%, 20% and 20%  
+- Clean and preprocess the training, held-out and test sets exactly the same way  
+- Create unigrams, bigrams and trigrams from the training data  
+- Use these n-grams to create predictive model  
+- Apply the model to the test set to evaluate the model  
+- Apply the word prediction model to the validation set to predict the next word  
+- Build a Shiny app as a user-interface to interact with our predictive models to predict the next word and publish it at "shinyapps.io" server    
+- Create a presentation to the general audience.  
+  
+
+# References:  
+1. [Natural language processing Wikipedia page.](https://en.wikipedia.org/wiki/Natural_language_processing)  
+2. [Text mining infrastucture in R.](http://www.jstatsoft.org/v25/i05/)  
+  
+# Appendix  
+- The Rmarkdown code index.Rmd  
+- Session Info  
+```{r, echo=FALSE}
+sessionInfo()
+```  
+
